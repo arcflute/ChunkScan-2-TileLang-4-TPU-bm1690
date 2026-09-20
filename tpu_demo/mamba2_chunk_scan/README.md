@@ -1,4 +1,4 @@
-# Standalone Mamba2 ChunkScan for the BM1690 cmodel
+# Standalone Mamba2 ChunkScan for the BM1690 cmodel and hardware
 
 This directory starts the BM1690 reproduction of the exact standalone Mamba2
 `_chunk_scan_fwd` operator evaluated by PipeThreader.  The fixed source of truth
@@ -7,10 +7,11 @@ is TileLang v0.1.5's
 `a32009bf1e314b514c07389123648ba19009f3a5`.  The contract is cross-checked
 against `state-spaces/mamba`'s `mamba_ssm/ops/triton/ssd_chunk_scan.py`.
 
-This is a cmodel-only reproduction.  It targets the BM1690 TileLang-TPU
-lowering path but does not run on a physical TPU or GPU.  Its goals are
-functional correctness and auditable pipeline code structure, not latency,
-throughput, speedup, hardware utilization, or proof of physical engine overlap.
+The P0-P7 reproduction was closed on the BM1690 CPU cmodel.  A separate
+single-core BM1690 PCIe route has since compiled and run S0, S1, S2, S3,
+and P6 on physical hardware.  The goals are functional correctness and
+auditable pipeline code structure, not latency, throughput, speedup,
+hardware utilization, or proof of physical engine overlap.
 
 ## Scope boundary
 
@@ -77,7 +78,8 @@ in `P6_IMPLEMENTATION_GUIDE.md`.  The P7 single-entry procedure is in
   the manual S3 reference, and the complete cmodel and protection gates pass.
 - **P7 — complete for this worktree's cmodel scope:** the single entry reran
   A0-P6 and archived its logs, source hashes, and evidence index.  Broader
-  Mamba2 integration and real-device execution remain separate routes.
+  Mamba2 integration remains separate; the single-core BM1690 device route
+  is recorded below.
 
 P1.1 isolated the broadcast requirement: W-axis expansion may use a zero W
 stride, whereas C-axis expansion must be materialized by the BM1690 NPU
@@ -108,17 +110,17 @@ The downstream pipeline stages keep two forms of generated source.  The raw
 BM1690 target source is checked for pipeline regions, task order, reduction
 loop structure, synchronization information, and versioned LMEM buffers.  The
 cmodel adapter intentionally strips `tpu_parallel_start/end` before compiling
-the emulator library, so the adapted source and cmodel output validate only
-serial functional equivalence.  Neither artifact is treated as real-hardware
-performance or concurrency evidence.
+the emulator library, so cmodel output validates only serial functional
+equivalence.  The separate PCIe device route retains the raw markers and
+validates numerical correctness on hardware; it still does not establish
+physical engine overlap or a performance advantage.
 
 ## Run the CPU tests
 
 From the repository root:
 
 ```bash
-/root/autodl-tmp/pipethreader-envs/chunkscan-a0-py310/bin/python \
-  -m pytest -v tpu_demo/mamba2_chunk_scan/test_reference.py
+python -m pytest -v tpu_demo/mamba2_chunk_scan/test_reference.py
 ```
 
 A0 through P6 have passed their project-worktree gates.  P4.2 adds the useful
@@ -127,9 +129,7 @@ control, and verifies the emitted sProg-B ordering from raw target code.  P5
 then closes the fixed configuration matrix with three accepted and three
 explicitly rejected outcomes.  P6 closes the compiler-generated explicit
 sProg-B route with planner unit tests, deterministic compiler rejection gates,
-manual-S3 structural equivalence, and cmodel numerical equivalence.  Real
-BM1690 performance, physical overlap, and multi-core scaling are outside the
-experimental scope and will not be claimed.
+manual-S3 structural equivalence, and cmodel numerical equivalence.
 
 P7's verified run `20260920T065556Z-4383` completed all 14 sequential gates.
 Its result and per-step logs are under `artifacts/p7/`; see
@@ -137,6 +137,15 @@ Its result and per-step logs are under `artifacts/p7/`; see
 worktree-local cmodel closure, not a cross-server Git reproduction or a real
 BM1690E/SG2260E hardware result.
 
-Preparation for the separate BM1690 hardware repository is tracked in
-`BM1690_REPO_HANDOFF.md`.  That checklist is not a claim that the current
-`pcie` adapter or runtime is ready for a physical TPU.
+## BM1690 hardware validation
+
+The separate PCIe route uses `main_template_device.cpp` and the real
+`libtpuv7_rt.so`.  `test_chunk_scan_device_s0.py` passed two smoke cases;
+`test_chunk_scan_device_pipeline.py` passed six cases each for S1, S2, S3,
+and P6 at `B=G=H=1, S=128, Ck=2, L=64, P=64, N=128` on one core.
+The device source has no pipeline marker for S1 and one matched marker pair
+for each of S2, S3, and P6.  See `BM1690_REPO_HANDOFF.md` for the tested
+environment, commands, result audit, and exact limitations.
+
+These results do not establish performance, physical GDMA/BDC overlap,
+eight-core scaling, other shapes, or BM1690e/SG2260e compatibility.

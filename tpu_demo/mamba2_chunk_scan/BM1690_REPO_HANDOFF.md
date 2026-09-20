@@ -1,87 +1,91 @@
-# BM1690 真机仓库交付清单（准备中）
+# BM1690 真机交付与验证记录
 
-目标仓库：<https://github.com/arcflute/ChunkScan-2-TileLang-4-TPU-bm1690>。
-2026-09-20 核查时，该 GitHub 仓库为空。此文件是交付准备清单，**不是**
-BM1690 真机已可运行的声明；不要把 P7 的 cmodel `PASS` 标为真机 `PASS`。
+本记录对应独立的 BM1690 仓库
+<https://github.com/arcflute/ChunkScan-2-TileLang-4-TPU-bm1690>。
+P7 的 14/14 `PASS` 是 CPU cmodel 收口；下述结果是新增的、彼此独立的
+BM1690 PCIe 真机正确性验证。两者都不是性能测量。
 
-## 已具备与尚缺的条件
+## 已验证范围
 
-- 当前项目 `exp/pipethreader-chunkscan-bm1690` 工作树的 P7 cmodel
-  结果已通过；算子是独立 `_chunk_scan_fwd`，固定 smoke 形状、单核。
-- ChunkScan 的 Python/脚本/文档文件已加入暂存区，但尚未提交；普通
-  `git push` 不会上传仅暂存、未提交的文件。
-- `3rdparty/tvm` 指向提交 `a8a54d2b1f43c23a47f2fc08779654918eae6464`，
-  但子模块内三个源文件还有本地修改。只提交主仓库不会带走它们。
-  已更新并暂存 `patches/tvm.patch`，覆盖这三个文件；当前补丁 SHA-256
-  为 `a0b2afc1b4adc4f25a9241c5bc2795babdf4beec44ed7569823454b2c68b4d72`。
-  子模块源码的 `git diff --check` 和补丁反向应用检查均已通过。
-- `tilelang/jit/adapter/libgen.py` 把芯片写死为 `bm1690`；现有 `pcie`
-  分支仍引用 emulator 路径与 `cdm_daemon_emulator`，因此尚不是安全的
-  真机编译/链接路径。`run_cmodel.sh` 仍应保持 cmodel 专用。
-- 本机 PPL 包位于 `/root/autodl-tmp/ppl_v1.4.195-geb2acdd0-20250220`；
-  它不属于 Git 仓库。目标服务器是否有兼容的驱动、PPL、真实设备
-  runtime 和交叉编译器仍需核实，不能从“GitHub 仓库为空”推断。
+2026-09-20 在 Ubuntu 24.04 x86-64 主机、真实 BM1690 PCIe 设备上，
+使用 PPL v1.4.195 的 `libbm1690.a`、真实 `tpuv7-runtime` 1.9.3、
+RISC-V 交叉编译器以及 `sg-host-drv`，完成如下固定形状的单核验证：
 
-## 推荐的仓库内容
+`B=G=H=1, S=128, Ck=2, L=64, P=64, N=128`，输入/输出 FP16，
+主要中间累加为 FP32。设备内核 `libkernel.so` 是 RISC-V ELF，主机
+`main.so` 是 x86-64 ELF；后者链接到真实的 `libtpuv7_rt.so`，
+没有链接 cmodel 模拟器库。
 
-保留构建所需的 TileLang 源码、仓库元数据与子模块声明；提交
-`tpu_demo/mamba2_chunk_scan/` 下的算子、测试、P7 汇总程序、运行脚本
-和 Markdown 文档，以及 `src/`、`tilelang/language/` 和编译器测试中的
-ChunkScan/TPU 改动。为三个 TVM 子模块源文件的改动选择**一种**可复现
-交付方式：
+| 实现 | 真机用例 | 原始设备源码的流水线标记 | 结果 |
+| --- | ---: | ---: | --- |
+| S0 单核串行 | 2 | 0 | `PASS` |
+| S1 K16 串行归约 | 6 | 0 | `PASS` |
+| S2 双阶段流水线 | 6 | 1 对 | `PASS` |
+| S3 论文顺序流水线 | 6 | 1 对 | `PASS` |
+| P6 编译器显式 sProg-B 排布 | 6 | 1 对 | `PASS` |
 
-1. 推荐：更新已有 `patches/tvm.patch`，使它精确表示相对于已钉住
-   TVM 提交的全部三个本地文件改动；干净克隆在
-   `git submodule update --init --recursive` 后执行 `git apply --check`
-   再应用。补丁 SHA-256 与基准 TVM 提交写入部署清单。
-2. 或者：将改动提交到可被私域服务器访问的 TVM fork，主仓库更新
-   子模块 URL 和 gitlink。没有可访问的子模块提交时，不得使用此方案。
+S1、S2、S3、P6 的六个用例均覆盖 residual-only、state-only、
+scan-only、all-terms、负 `D` residual，以及因果上三角污染。
+所有用例对 CPU oracle 的 `atol=rtol=1e-2` 比较均通过，
+无 NaN/Inf；污染用例与干净 scan 输出逐位相同。
+四版 all-terms 的最大绝对误差均为 `6.103515625e-05`。
+S0 的 residual-only 完全一致，all-terms 最大绝对误差同为
+`6.103515625e-05`。控制台最终为 `hardware_batch_exit=0`。
 
-不要上传本机 `build/`、`.venv/`、PPL release/SDK、设备库、`*.so`、
-`*.o`、运行时缓存、`.pt` 输出、P7 逐项日志或含令牌/私域地址的真实
-环境文件。P7 的项目报告可以提交，但生成的 `artifacts/` 应在目标
-环境重新生成；原机证据如需长期保存，单独封存并注明来源。
+验收使用的远端源码提交是 `5659001ea22f9993b69e090bf5345d43dea00e9a`，
+相对于仓库基准 `86add2f2ddfaa58783bd0fb7dd7c2ddbe1395a25`
+交付的邮件补丁 SHA-256 为
+`c17fe60137b2d3d8046cd79b1287577a5428a93489cfda9f2f4c9729771f916a`。
+四份真机 `result.json` 的状态、六个用例、源码 SHA-256 和流水线标记
+已在远端文件级复核；生成的二进制、日志和 JSON 不随 Git 源码提交。
 
-## 建议配置接口
+## 可复现的源码和环境边界
 
-已新增真机专用的 `.env.bm1690.example`（仅占位值）；仍需新增
-`run_device.sh`，至少配置 PPL 根目录、真实设备 runtime 根目录、
-RISC-V 交叉编译器目录、Python 解释器、设备编号与芯片名。真实
-`.env.bm1690` 应被忽略，不进入公开 GitHub。硬件入口不得继承
-`run_cmodel.sh` 的 emulator `LD_LIBRARY_PATH`，也不得删除 P6 原始
-源码里的 `tpu_parallel_start/end` 后再宣称完成流水线真机验证。
+- `3rdparty/tvm` 固定为
+  `a8a54d2b1f43c23a47f2fc08779654918eae6464`。
+  干净克隆需要先初始化子模块，再检查并应用
+  [`patches/tvm.patch`](../../patches/tvm.patch)；补丁 SHA-256 为
+  `a0b2afc1b4adc4f25a9241c5bc2795babdf4beec44ed7569823454b2c68b4d72`。
+  已打补丁的子模块不可再次正向应用。
+- [`tilelang/jit/adapter/libgen.py`](../../tilelang/jit/adapter/libgen.py)
+  的 PCIe 分支使用 `CHUNKSCAN_DEVICE_RUNTIME_ROOT` 与
+  `CHUNKSCAN_RISCV_TOOLCHAIN_ROOT`，不再引用 emulator 头文件、库或 rpath。
+  cmodel 编译分支保持独立。
+- [`main_template_device.cpp`](main_template_device.cpp) 是真机专用模板，
+  由 `CHUNKSCAN_DEVICE_ID` 选择设备；原有 cmodel 模板未改动。
+  首次验证每个用例仅启动一次 kernel，不执行自动预热或测量循环。
+- PPL SDK、交叉编译器、真实 runtime、驱动、`.venv/`、`build/` 和
+  `artifacts/` 均是运行环境或生成物，不应提交到公开仓库。
+  [`.env.bm1690.example`](.env.bm1690.example) 仅为路径配置模板。
 
-私域服务器上的单入口应依次执行：环境/设备预检、最小设备算子、
-P1 原语、S0、S1、S3/P6。首次真机验证先用单核；8 核分配是后续
-单独阶段。每项输出独立日志，失败即停，归档提交号、芯片/驱动/
-SDK 版本、编译命令、生成源码、退出码与数值差异，便于离线带回诊断。
+在已按仓库说明构建 TileLang/TVM、准备 CPU PyTorch 环境并设置
+`PPL_PROJECT_ROOT`、`CHUNKSCAN_DEVICE_RUNTIME_ROOT`、
+`CHUNKSCAN_RISCV_TOOLCHAIN_ROOT`、`CHUNKSCAN_DEVICE_ID`、
+`PYTHONPATH`、`TVM_LIBRARY_PATH`、真实 runtime 的 `LD_LIBRARY_PATH`
+后，先不带 `--run` 编译，再带 `--run` 验证：
 
-## 上传前的停止门
+```bash
+python tpu_demo/mamba2_chunk_scan/test_chunk_scan_device_s0.py
+python tpu_demo/mamba2_chunk_scan/test_chunk_scan_device_s0.py --run
 
-1. 真机编译路径不再引用 emulator 头文件、库或 rpath；真实 runtime
-   与 SDK 的 ABI 已从目标服务器确认。
-2. 所有拟交付源码均已跟踪；TVM 修改可在干净克隆中重建；构建产物
-   和秘密文件未进入暂存区。
-3. 保留 P7 cmodel 回归通过，但不把它当作真机结果。
-4. 从新仓库的干净克隆可以初始化子模块、应用补丁、完成静态构建。
-   没有硬件时不能宣称运行已通过。
+bash -c 'set -e; for stage in s1 s2 s3 p6; do
+  python tpu_demo/mamba2_chunk_scan/test_chunk_scan_device_pipeline.py "$stage"
+done'
+bash -c 'set -e; for stage in s1 s2 s3 p6; do
+  python tpu_demo/mamba2_chunk_scan/test_chunk_scan_device_pipeline.py "$stage" --run
+done'
+```
 
-在完成上述停止门前，建议仅在目标 GitHub 仓库标记“bring-up
-candidate”，不要发布“BM1690 hardware validated”标签。
+真机结果写在 `artifacts/device_pipeline/<stage>/result.json`；
+`compile_manifest.json` 记录真实 runtime 路径、设备源码 SHA-256、
+ELF 架构与流水线标记数。运行时仍应逐阶段失败即停，
+不要把 cmodel 的 `run_cmodel.sh` 当成真机入口。
 
-## 提交与私域交付顺序
+## 尚未验证和不得推断的结论
 
-1. 已整理 TVM 差异并更新 `patches/tvm.patch`；补丁包含
-   `target_kind.cc`、`block_access_region_detector.cc`、
-   `storage_rewrite.cc` 三个文件，且在当前已打补丁子模块上通过
-   `git apply --reverse --check`。不要在当前子模块上正向再应用一次。
-2. 已忽略生成的 `artifacts/`、真实 `.env.bm1690` 和 build/runtime
-   二进制；源码、补丁和文档已暂存，仍需复核并提交。
-3. TVM 补丁更新后已重新运行 P7，14 项均为 `PASS`。它仍是 cmodel
-   证据，不是 BM1690 真机证据。
-4. 为新 GitHub 仓库新增独立 remote，确认 URL 后推送；不要改用
-   当前指向 `xwhzz/tilelang-tpu` 的 `origin` 做盲目推送。
-5. 私域服务器干净克隆新仓库，初始化子模块，检查并应用补丁。
-   然后盘点设备驱动、PPL、真实 runtime、交叉编译器，再做真机
-   编译和分阶段测试。缺失任何 SDK/设备信息时，在这里停止而不是
-   继续猜测编译或链接参数。
+这次只证明上述单核、固定形状在真实 BM1690 上正确运行，
+以及 PCIe 编译的原始设备源码保留流水线标记。
+它不证明物理 GDMA/BDC 重叠、吞吐量或加速比，也不覆盖其他形状、
+八核扩展、BM1690e/SG2260e、完整 Mamba2 网络或端到端推理。
+控制台的单次耗时包含当前测试封装因素，不能作为性能结论。
+下一阶段 BM1690e 应在独立路线验证，不覆盖本记录。
