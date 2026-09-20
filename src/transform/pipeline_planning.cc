@@ -27,6 +27,8 @@
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
+#include <unordered_set>
+
 #include "../target/utils.h"
 
 namespace tvm {
@@ -147,92 +149,158 @@ private:
       pipeline_stage_infos.push_back(std::move(pinfo));
     }
 
-    // analysis use-def chain
-    for (auto &pinfo : pipeline_stage_infos) {
-      for (int i = pinfo.original_order + 1;
-           i < static_cast<int>(pipeline_body_seq->size()); i++) {
-        if (!pinfo.copy_stage)
-          continue;
-        for (const BufferRegion &read : pipeline_stage_infos[i].reads) {
-          if (std::find_if(pinfo.writes.begin(), pinfo.writes.end(),
-                           [&](const BufferRegion &r) {
-                             return r->buffer == read->buffer &&
-                                    MayConflict(r->region, read->region);
-                           }) != pinfo.writes.end()) {
-            pinfo.last_use_stage = std::max(pinfo.last_use_stage, i);
-          }
-        }
-        for (const BufferRegion &write : pipeline_stage_infos[i].writes) {
-          if (std::find_if(pinfo.writes.begin(), pinfo.writes.end(),
-                           [&](const BufferRegion &r) {
-                             return r->buffer == write->buffer &&
-                                    MayConflict(r->region, write->region);
-                           }) != pinfo.writes.end()) {
-            LOG(FATAL) << "Pipeline planning error: Multiple writes to "
-                          "overlapping buffer regions detected. "
-                       << "Stage " << pinfo.original_order << " and stage " << i
-                       << " are both writing to buffer '" << write->buffer->name
-                       << "' with overlapping regions. This is not supported "
-                          "in pipeline planning.";
-          }
-        }
-      }
-    }
+    auto explicit_order_anno =
+        loop->annotations.Get("tl_pipeline_order");
+    auto explicit_stage_anno =
+        loop->annotations.Get("tl_pipeline_stage");
+    bool has_explicit_order = explicit_order_anno.defined();
+    bool has_explicit_stage = explicit_stage_anno.defined();
+    CHECK_EQ(has_explicit_order, has_explicit_stage)
+        << "ValueError: explicit pipeline schedule requires both order and "
+           "stage";
+    bool has_explicit_schedule =
+        has_explicit_order && has_explicit_stage;
 
-    // Making stages and orders
-    int order_idx = 0;
-    for (auto &pinfo : pipeline_stage_infos) {
-      if (pinfo.copy_stage && pinfo.last_use_stage != -1)
-        continue;
-      pinfo.order = order_idx++;
-      pinfo.stage = num_stages;
-      for (auto &pinfo_1 : pipeline_stage_infos) {
-        if (pinfo_1.copy_stage &&
-            pinfo_1.last_use_stage == pinfo.original_order) {
-          pinfo_1.order = order_idx++;
-          pinfo_1.stage = 0;
-        }
-      }
-    }
-    ICHECK(size_t(order_idx) == pipeline_stage_infos.size())
-        << "The number of stages should be equal to the number of pipeline "
-           "stages. "
-        << "Got " << order_idx << " stages and " << pipeline_stage_infos.size()
-        << " pipeline stages.";
+    if (has_explicit_schedule) {
+      auto explicit_orders =
+          Downcast<Array<Integer>>(explicit_order_anno);
+      auto explicit_stages =
+          Downcast<Array<Integer>>(explicit_stage_anno);
+      CHECK_EQ(explicit_orders.size(), pipeline_stage_infos.size())
+          << "ValueError: explicit pipeline order size must match the "
+             "lowered pipeline body size";
+      CHECK_EQ(explicit_stages.size(), pipeline_stage_infos.size())
+          << "ValueError: explicit pipeline stage size must match the "
+             "lowered pipeline body size";
 
-    // if all the copy is at the end of the order, we can move these copy to the
-    // beginning of the order and shrink the stage offset by 1.
-    int copy_stage_at_end = [&]() {
-      int copy_stage_cnt = 0;
-      int copy_order_min = pipeline_stage_infos.size();
-      int non_copy_order_max = 0;
+      if (const auto *extent = loop->extent.as<IntImmNode>()) {
+        CHECK_GT(extent->value, num_stages)
+            << "ValueError: explicit pipeline schedule requires reduction "
+               "iterations > num_stages to form a nonempty steady state";
+      }
+
+      std::unordered_set<int> seen_orders;
+      bool has_producer_stage = false;
+      bool has_consumer_stage = false;
+      for (size_t i = 0; i < pipeline_stage_infos.size(); ++i) {
+        int order = static_cast<int>(explicit_orders[i]->value);
+        int stage = static_cast<int>(explicit_stages[i]->value);
+        CHECK_GE(order, 0)
+            << "ValueError: explicit pipeline order must be non-negative";
+        CHECK_LT(order, static_cast<int>(pipeline_stage_infos.size()))
+            << "ValueError: explicit pipeline order must be a permutation "
+               "of [0, body_size)";
+        CHECK(seen_orders.insert(order).second)
+            << "ValueError: explicit pipeline order contains a duplicate: "
+            << order;
+        CHECK_GE(stage, 0)
+            << "ValueError: explicit pipeline stage must be non-negative";
+        CHECK_LE(stage, num_stages)
+            << "ValueError: explicit pipeline stage exceeds num_stages";
+        has_producer_stage = has_producer_stage || stage == 0;
+        has_consumer_stage = has_consumer_stage || stage == num_stages;
+        pipeline_stage_infos[i].order = order;
+        pipeline_stage_infos[i].stage = stage;
+      }
+      CHECK(has_producer_stage)
+          << "ValueError: explicit pipeline schedule requires stage 0";
+      CHECK(has_consumer_stage)
+          << "ValueError: explicit pipeline schedule requires the terminal "
+             "num_stages stage";
+    } else {
+      // Analyze use-def chains for the existing inferred-schedule path.
       for (auto &pinfo : pipeline_stage_infos) {
-        if (pinfo.copy_stage) {
-          copy_stage_cnt++;
-          copy_order_min = std::min(copy_order_min, pinfo.order);
-        } else {
-          non_copy_order_max = std::max(non_copy_order_max, pinfo.order);
+        for (int i = pinfo.original_order + 1;
+             i < static_cast<int>(pipeline_body_seq->size()); i++) {
+          if (!pinfo.copy_stage)
+            continue;
+          for (const BufferRegion &read : pipeline_stage_infos[i].reads) {
+            if (std::find_if(pinfo.writes.begin(), pinfo.writes.end(),
+                             [&](const BufferRegion &r) {
+                               return r->buffer == read->buffer &&
+                                      MayConflict(r->region, read->region);
+                             }) != pinfo.writes.end()) {
+              pinfo.last_use_stage = std::max(pinfo.last_use_stage, i);
+            }
+          }
+          for (const BufferRegion &write : pipeline_stage_infos[i].writes) {
+            if (std::find_if(pinfo.writes.begin(), pinfo.writes.end(),
+                             [&](const BufferRegion &r) {
+                               return r->buffer == write->buffer &&
+                                      MayConflict(r->region, write->region);
+                             }) != pinfo.writes.end()) {
+              LOG(FATAL) << "Pipeline planning error: Multiple writes to "
+                            "overlapping buffer regions detected. "
+                         << "Stage " << pinfo.original_order << " and stage "
+                         << i << " are both writing to buffer '"
+                         << write->buffer->name
+                         << "' with overlapping regions. This is not "
+                            "supported in pipeline planning.";
+            }
+          }
         }
       }
-      if (copy_order_min > non_copy_order_max)
-        return copy_stage_cnt;
-      return -1;
-    }();
-    if (copy_stage_at_end > 0 && num_stages >= 2) {
-      for (auto &pinfo : pipeline_stage_infos) { // move copy to the beginning
-        pinfo.order =
-            (pinfo.order + copy_stage_at_end) % pipeline_stage_infos.size();
-        if (!pinfo.copy_stage)
-          pinfo.stage--;
+
+      // Preserve the original inferred scheduling behavior byte-for-byte.
+      int order_idx = 0;
+      for (auto &pinfo : pipeline_stage_infos) {
+        if (pinfo.copy_stage && pinfo.last_use_stage != -1)
+          continue;
+        pinfo.order = order_idx++;
+        pinfo.stage = num_stages;
+        for (auto &pinfo_1 : pipeline_stage_infos) {
+          if (pinfo_1.copy_stage &&
+              pinfo_1.last_use_stage == pinfo.original_order) {
+            pinfo_1.order = order_idx++;
+            pinfo_1.stage = 0;
+          }
+        }
+      }
+      ICHECK(size_t(order_idx) == pipeline_stage_infos.size())
+          << "The number of stages should be equal to the number of pipeline "
+             "stages. "
+          << "Got " << order_idx << " stages and "
+          << pipeline_stage_infos.size() << " pipeline stages.";
+
+      // If all copies are at the end, move them to the beginning and shrink
+      // the non-copy stage offset by one.  This is the pre-P6 behavior.
+      int copy_stage_at_end = [&]() {
+        int copy_stage_cnt = 0;
+        int copy_order_min = pipeline_stage_infos.size();
+        int non_copy_order_max = 0;
+        for (auto &pinfo : pipeline_stage_infos) {
+          if (pinfo.copy_stage) {
+            copy_stage_cnt++;
+            copy_order_min = std::min(copy_order_min, pinfo.order);
+          } else {
+            non_copy_order_max = std::max(non_copy_order_max, pinfo.order);
+          }
+        }
+        if (copy_order_min > non_copy_order_max)
+          return copy_stage_cnt;
+        return -1;
+      }();
+      if (copy_stage_at_end > 0 && num_stages >= 2) {
+        for (auto &pinfo : pipeline_stage_infos) {
+          pinfo.order =
+              (pinfo.order + copy_stage_at_end) %
+              pipeline_stage_infos.size();
+          if (!pinfo.copy_stage)
+            pinfo.stage--;
+        }
       }
     }
 
     // Finally, make the pipeline annotation
     Map<String, ObjectRef> annotations;
     for (const auto &[key, value] : loop->annotations) {
-      if (key != "num_stages") {
+      if (key != "num_stages" && key != "tl_pipeline_order" &&
+          key != "tl_pipeline_stage") {
         annotations.Set(key, value);
       }
+    }
+    if (has_explicit_schedule) {
+      annotations.Set("tl_pipeline_explicit_schedule", Integer(1));
     }
 
     std::vector<Integer> orders, stages;

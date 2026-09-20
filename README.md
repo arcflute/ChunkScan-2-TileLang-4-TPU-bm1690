@@ -47,15 +47,16 @@ In short, this repository is about bringing TileLang's programming model to SOPH
 
 ## Quick Start
 
-### 1. Prepare the repository
+### 1. Prepare the repository (in a clean clone)
 
 ```bash
 git submodule update --init --recursive
-cp patches/tvm.patch 3rdparty/tvm/tvm.patch
-cd 3rdparty/tvm
-git apply tvm.patch
-cd ../..
+git -C 3rdparty/tvm apply --check ../../patches/tvm.patch
+git -C 3rdparty/tvm apply ../../patches/tvm.patch
 ```
+
+The patch must match the pinned TVM submodule commit.  Do not apply it twice
+or run these clean-clone steps in an already patched working tree.
 
 ### 2. Build and install
 

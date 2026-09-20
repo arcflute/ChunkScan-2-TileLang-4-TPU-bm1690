@@ -310,6 +310,17 @@ def ppl_mul(out, inp1, inp2):
     return T.call_extern("handle", "ppl.mul", outptr, inpptr1, inpptr2)
 
 
+def ppl_npu_bcast(out, inp):
+    """Broadcast a one-row local tile across TPU NPU lanes.
+
+    For rank-2 tiles, ``inp`` has shape ``(1, N)`` and ``out`` has shape
+    ``(M, N)``. Expand a singleton W dimension before calling this helper.
+    """
+    outptr = out.access_ptr("w")
+    inpptr = inp.access_ptr("r")
+    return T.call_extern("handle", "ppl.npu_bcast", outptr, inpptr)
+
+
 @T.macro
 def ppl_exp2(out, work0, work1, coeff, table):  # only support FP32
     """Compute `exp(out)` in place.

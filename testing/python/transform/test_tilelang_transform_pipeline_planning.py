@@ -1,12 +1,13 @@
 # Copyright (c) Tile-AI Corporation.
 # Licensed under the MIT License.
+import pytest
+
 from tilelang import tvm as tvm
 import tilelang as tl
-from tilelang.utils.target import determine_target
 import tilelang.language as T
 import tilelang.testing
 
-auto_target = tvm.target.Target(determine_target("auto"))
+auto_target = tvm.target.Target("cuda -arch=sm_80")
 
 
 def _check(original, transformed):
@@ -65,6 +66,166 @@ def test_simple_pipeline():
 
     _check(before, after)
 
+def _plan_for_tpu(func):
+    mod = tvm.IRModule.from_expr(func.with_attr("global_symbol", "main"))
+    mod = tvm.tir.transform.BindTarget(tvm.target.Target("tpu"))(mod)
+    return tl.transform.PipelinePlanning()(mod)
+
+
+def _single_planned_loop(mod):
+    loops = []
+
+    def visitor(node):
+        if (
+            isinstance(node, tvm.tir.For)
+            and "software_pipeline_order" in node.annotations
+        ):
+            loops.append(node)
+
+    tvm.tir.stmt_functor.post_order_visit(mod["main"].body, visitor)
+    assert len(loops) == 1
+    return loops[0]
+
+
+def test_explicit_pipeline_schedule_is_preserved():
+    @T.prim_func
+    def before(
+        A: T.Tensor((4, 1), "float32"),
+        C: T.Tensor((4, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(
+                4,
+                num_stages=2,
+                order=[0, 1],
+                stage=[0, 2],
+            ):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    loop = _single_planned_loop(_plan_for_tpu(before))
+    assert [int(value) for value in loop.annotations[
+        "software_pipeline_order"
+    ]] == [0, 1]
+    assert [int(value) for value in loop.annotations[
+        "software_pipeline_stage"
+    ]] == [0, 2]
+    assert int(loop.annotations["tl_pipeline_explicit_schedule"]) == 1
+    assert "tl_pipeline_order" not in loop.annotations
+    assert "tl_pipeline_stage" not in loop.annotations
+    assert "num_stages" not in loop.annotations
+
+
+def test_explicit_pipeline_schedule_requires_order_and_stage():
+    @T.prim_func
+    def before(
+        A: T.Tensor((4, 1), "float32"),
+        C: T.Tensor((4, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(4, num_stages=2, order=[0, 1]):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    with pytest.raises(
+        (tvm.TVMError, ValueError), match="requires both order and stage"
+    ):
+        _plan_for_tpu(before)
+
+
+def test_explicit_pipeline_schedule_rejects_duplicate_order():
+    @T.prim_func
+    def before(
+        A: T.Tensor((4, 1), "float32"),
+        C: T.Tensor((4, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(
+                4,
+                num_stages=2,
+                order=[0, 0],
+                stage=[0, 2],
+            ):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    with pytest.raises(
+        (tvm.TVMError, ValueError), match="contains a duplicate"
+    ):
+        _plan_for_tpu(before)
+
+
+def test_explicit_pipeline_schedule_rejects_invalid_stage():
+    @T.prim_func
+    def before(
+        A: T.Tensor((4, 1), "float32"),
+        C: T.Tensor((4, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(
+                4,
+                num_stages=2,
+                order=[0, 1],
+                stage=[0, 3],
+            ):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    with pytest.raises(
+        (tvm.TVMError, ValueError), match="exceeds num_stages"
+    ):
+        _plan_for_tpu(before)
+
+
+def test_explicit_pipeline_schedule_rejects_insufficient_loop_depth():
+    @T.prim_func
+    def before(
+        A: T.Tensor((2, 1), "float32"),
+        C: T.Tensor((2, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(
+                2,
+                num_stages=2,
+                order=[0, 1],
+                stage=[0, 2],
+            ):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    with pytest.raises(
+        (tvm.TVMError, ValueError), match="nonempty steady state"
+    ):
+        _plan_for_tpu(before)
+
+
+def test_explicit_pipeline_schedule_rejects_dependency_violation():
+    @T.prim_func
+    def before(
+        A: T.Tensor((4, 1), "float32"),
+        C: T.Tensor((4, 1), "float32"),
+    ):
+        with T.Kernel(1, 1, is_cpu=True):
+            A_shared = T.alloc_shared((1, 1), "float32")
+            for i in T.Pipelined(
+                4,
+                num_stages=2,
+                order=[1, 0],
+                stage=[2, 0],
+            ):
+                A_shared[0, 0] = A[i, 0]
+                C[i, 0] = A_shared[0, 0]
+
+    mod = _plan_for_tpu(before)
+    with pytest.raises(
+        (tvm.TVMError, ValueError), match="in a later stage"
+    ):
+        tl.transform.InjectSoftwarePipeline()(mod)
 
 if __name__ == "__main__":
     tilelang.testing.main()

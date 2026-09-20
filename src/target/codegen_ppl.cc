@@ -865,26 +865,68 @@ inline std::vector<int> StrideIndicesForRank(int rank, bool local_layout) {
 }
 
 void CodeGenTileLangPPL::VisitExpr_(const CallNode *op, std::ostream &os) {
-  auto process_stride = [&,
-                         this](const std::vector<int> &src0_shape,
-                               const std::vector<int> &src1_shape,
-                               const std::string &src0, const std::string &src1,
-                               const std::string &dtype) -> std::stringstream {
+  auto process_stride =
+      [&, this](const std::vector<int> &src0_shape,
+                const std::vector<int> &src1_shape,
+                const std::string &src0,
+                const std::string &src1) -> std::stringstream {
     std::stringstream src1_stride;
-    if (src1_shape[1] == 1 && src0_shape[1] != 1) {
-      std::string stride_var = name_supply_->FreshName(src1 + "_stride");
-      this->PrintIndent();
-      this->stream << "dim4 " << stride_var << ";\n";
-      this->PrintIndent();
-      this->stream << "tpu_aligned_stride(&" << stride_var << ", 0, &" << src1
-                   << ".shape, " << dtype << ");\n";
-      this->PrintIndent();
-      this->stream << stride_var << ".w = 0;\n";
-      src1_stride << "&" << stride_var << ", ";
-    } else if (src1_shape[1] == src0_shape[1]) {
-      src1_stride << "(" << src1 << ".default_stride ? NULL : &" << src1
-                  << ".stride), ";
+
+    ICHECK_EQ(src0_shape.size(), src1_shape.size())
+        << "PPL elementwise operands must have the same logical rank: "
+        << src0 << " has rank " << src0_shape.size() << ", while "
+        << src1 << " has rank " << src1_shape.size();
+
+    if (src0_shape == src1_shape) {
+      src1_stride << "(" << src1 << ".default_stride ? NULL : &"
+                  << src1 << ".stride), ";
+      return src1_stride;
     }
+
+    ICHECK_EQ(src0_shape.size(), 2U)
+        << "PPL elementwise RHS broadcasting currently supports rank-2 "
+        << "tiles only; got " << src0 << " shape rank "
+        << src0_shape.size() << " and " << src1 << " shape rank "
+        << src1_shape.size();
+
+    for (size_t axis = 0; axis < 2; ++axis) {
+      ICHECK(src1_shape[axis] == src0_shape[axis] ||
+             src1_shape[axis] == 1)
+          << "Invalid PPL elementwise RHS broadcast at logical axis "
+          << axis << ": destination/source-0 extent is "
+          << src0_shape[axis] << ", RHS extent is "
+          << src1_shape[axis];
+    }
+
+    // Rank-2 TileLang tiles lower to PPL dim4 as {1, M, 1, N}.
+    // BM1690 elementwise ops support a singleton logical N through
+    // stride.w = 0. A singleton logical M crosses NPU lanes and must be
+    // materialized with ppl.npu_bcast instead of stride.c = 0.
+    const bool broadcast_c =
+        src1_shape[0] == 1 && src0_shape[0] != 1;
+    const bool broadcast_w =
+        src1_shape[1] == 1 && src0_shape[1] != 1;
+
+    ICHECK(!broadcast_c)
+        << "PPL elementwise C-axis broadcasting is not supported through a "
+        << "zero C stride on BM1690; materialize the RHS with "
+        << "T.ppl_npu_bcast before the elementwise operation";
+
+    ICHECK(broadcast_w)
+        << "Unsupported PPL elementwise RHS shape relation between "
+        << src0 << " and " << src1;
+
+    std::string stride_var =
+        name_supply_->FreshName(src1 + "_stride");
+
+    this->PrintIndent();
+    this->stream << "dim4 " << stride_var << " = "
+                 << src1 << ".stride;\n";
+
+    this->PrintIndent();
+    this->stream << stride_var << ".w = 0;\n";
+
+    src1_stride << "&" << stride_var << ", ";
     return src1_stride;
   };
 
@@ -901,7 +943,7 @@ void CodeGenTileLangPPL::VisitExpr_(const CallNode *op, std::ostream &os) {
       dtype = "";
     }
     std::stringstream src1_stride =
-        process_stride(src0_shape, src1_shape, src0, src1, dtype);
+        process_stride(src0_shape, src1_shape, src0, src1);
     this->PrintIndent();
     this->stream << op_name << "( " << dst << ".addr, " << src0 << ".addr, "
                  << src1 << ".addr, "
@@ -1068,10 +1110,26 @@ void CodeGenTileLangPPL::VisitExpr_(const CallNode *op, std::ostream &os) {
             } else {
               idx_str = PrintExpr(e);
             }
-            min_expr += "(" + idx_str + ") * " + strides[stride_idx[i]] + "+";
+            if (stride_idx[i] == 1) {
+              // Local C is distributed across NPU lanes. The lane index is
+              // encoded in the high part of local_addr_t; only C groups past
+              // NPU_NUM advance by stride.c inside each lane.
+              min_expr +=
+                  "((" + idx_str +
+                  ") % NPU_NUM) * LOCAL_MEM_SIZE +";
+              min_expr +=
+                  "((" + idx_str + ") / NPU_NUM) * " +
+                  parent_var + ".stride.c * " +
+                  std::to_string(bytes_size) + "+";
+            } else {
+              min_expr +=
+                  "(" + idx_str + ") * " +
+                  strides[stride_idx[i]] + " * " +
+                  std::to_string(bytes_size) + "+";
+            }
           }
           min_expr[min_expr.size() - 1] = ' ';
-          min_expr = "(" + min_expr + ")" + " * " + std::to_string(bytes_size);
+          min_expr = "(" + min_expr + ")";
           inst.push_back("__ppl_tensor_info " + new_src_var + " = {.shape = " +
                          src_shape + ", .stride = " + parent_var +
                          ".stride, .addr = " + parent_var +
@@ -1279,6 +1337,30 @@ void CodeGenTileLangPPL::VisitExpr_(const CallNode *op, std::ostream &os) {
                      << left_right_dtype << ");\n";
     } else if (op_name == "ppl.sub") {
       handle_elementwise("tpu_bdc_fp_sub", true);
+    } else if (op_name == "ppl.npu_bcast") {
+      auto dst = var_idmap_[op->args[1].as<CallNode>()->args[1].as<VarNode>()];
+      auto src0 = var_idmap_[op->args[2].as<CallNode>()->args[1].as<VarNode>()];
+
+      auto dtype_ = op->args[1].as<CallNode>()->args[0].as<CallNode>()->dtype;
+      std::string dtype;
+      if (dtype_ == DataType::Float(16)) {
+        dtype = "DT_FP16";
+      } else if (dtype_ == DataType::Float(32)) {
+        dtype = "DT_FP32";
+      } else if (dtype_ == DataType::BFloat(16)) {
+        dtype = "DT_BFP16";
+      } else {
+        LOG(FATAL) << "Unsupported dtype in ppl.npu_bcast: " << dtype_;
+      }
+
+      this->PrintIndent();
+      this->stream << "if (" << src0 << ".size) {\n";
+      this->PrintIndent();
+      this->stream << "  tpu_bdc_npu_bcast(" << dst << ".addr, "
+                   << src0 << ".addr, &" << dst << ".shape, "
+                   << dtype << ");\n";
+      this->PrintIndent();
+      this->stream << "}\n";
     } else if (op_name == "ppl.mul") {
       handle_elementwise("tpu_bdc_fp_mul", true);
     } else if (op_name == "ppl.add") {

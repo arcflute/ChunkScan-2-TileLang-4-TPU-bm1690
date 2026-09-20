@@ -99,3 +99,8 @@ tilelang/jit/adapter/cython/.cycache
 /src/tl_templates/tpu/libkernel.so
 /src/tl_templates/tpu/main.cpp
 /src/tl_templates/tpu/main.so
+
+# ChunkScan BM1690 handoff
+/tpu_demo/mamba2_chunk_scan/.env.bm1690
+/tpu_demo/mamba2_chunk_scan/artifacts/*
+!/tpu_demo/mamba2_chunk_scan/artifacts/.gitignore

@@ -1,5 +1,24 @@
+diff --git a/src/target/target_kind.cc b/src/target/target_kind.cc
+index fae8298f4..d8ac9691a 100644
+--- a/src/target/target_kind.cc
++++ b/src/target/target_kind.cc
+@@ -329,6 +329,14 @@ TVM_REGISTER_TARGET_KIND("c", kDLCPU)
+     .set_default_keys({"cpu"})
+     .set_target_parser(tvm::target::parsers::cpu::ParseTarget);
+ 
++TVM_REGISTER_TARGET_KIND("tpu", kDLCPU)
++    .add_attr_option<String>("mcpu")
++    .add_attr_option<String>("march")
++    .add_attr_option<Integer>("workspace-byte-alignment")
++    .add_attr_option<Integer>("constants-byte-alignment")
++    .set_default_keys({"cpu"})
++    .set_target_parser(tvm::target::parsers::cpu::ParseTarget);
++
+ TVM_REGISTER_TARGET_KIND("cuda", kDLCUDA)
+     .add_attr_option<String>("mcpu")
+     .add_attr_option<String>("arch")
 diff --git a/src/tir/analysis/block_access_region_detector.cc b/src/tir/analysis/block_access_region_detector.cc
-index 57cf0ae1bf..113244b5a5 100644
+index 57cf0ae1b..216ffdd27 100644
 --- a/src/tir/analysis/block_access_region_detector.cc
 +++ b/src/tir/analysis/block_access_region_detector.cc
 @@ -83,6 +83,8 @@ class BlockReadWriteDetector : public StmtExprVisitor {
@@ -24,20 +43,11 @@ index 57cf0ae1bf..113244b5a5 100644
    ExprVisitor::VisitExpr_(op);
  }
  
-@@ -214,7 +220,7 @@ void BlockReadWriteDetector::VisitExpr_(const CallNode* op) {
-       StmtExprVisitor::VisitExpr_(op);
-     }
-     return;
--  }
-+  }  
-   if (op->op.same_as(builtin::if_then_else())) {
-     VisitExpr(op->args[0]);
-     {
 @@ -229,6 +235,17 @@ void BlockReadWriteDetector::VisitExpr_(const CallNode* op) {
      }
      return;
    }
-+  
++
 +  if (op->op.same_as(builtin::call_extern())) {
 +    std::string op_name = Downcast<StringImm>(op->args[0])->value;
 +    if (op_name == "ppl.copy") {
@@ -47,7 +57,7 @@ index 57cf0ae1bf..113244b5a5 100644
 +
 +    }
 +  }
-+  
++
    StmtExprVisitor::VisitExpr_(op);
  }
  
@@ -66,14 +76,8 @@ index 57cf0ae1bf..113244b5a5 100644
    for (const BufferRegion& opaque_access : opaques) {
      reads.push_back(opaque_access);
      writes.push_back(opaque_access);
-@@ -405,3 +424,4 @@ TVM_REGISTER_GLOBAL("tir.analysis.GetBlockReadWriteRegion").set_body_typed(GetBl
- 
- }  // namespace tir
- }  // namespace tvm
-+ 
-\ No newline at end of file
 diff --git a/src/tir/transforms/storage_rewrite.cc b/src/tir/transforms/storage_rewrite.cc
-index 877433c2d2..305870d48e 100644
+index 2d2aafedb..0b19afe9b 100644
 --- a/src/tir/transforms/storage_rewrite.cc
 +++ b/src/tir/transforms/storage_rewrite.cc
 @@ -171,11 +171,11 @@ class LinearAccessPatternFinder final : public StmtExprVisitor {
@@ -93,7 +97,7 @@ index 877433c2d2..305870d48e 100644
      }
    }
  
-@@ -1325,10 +1325,10 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
+@@ -1326,10 +1326,10 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
        var_info.element_dtype = value_dtype.element_of();
      }
  
