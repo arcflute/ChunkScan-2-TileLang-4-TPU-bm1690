@@ -1,10 +1,17 @@
-# TileLang-TPU Mamba2 ChunkScan cmodel-only implementation plan
+# TileLang-TPU Mamba2 ChunkScan implementation plan
 
 Plan scope revised on 2026-09-13: all required execution and validation use
 the CPU-hosted BM1690 cmodel; real-accelerator evaluation is not a project
 stage.
 
-## Invariants
+Historical note: the P0–P7 plan below was completed under that cmodel-only
+scope.  The project subsequently completed a separate single-core BM1690
+hardware correctness bring-up.  The approved P8–P10 hardware performance and
+multi-core continuation is maintained in
+`P8_P10_BM1690_PERFORMANCE_MULTICORE_PLAN.md`; it does not retroactively turn
+P0–P7 cmodel evidence into hardware performance evidence.
+
+## P0–P7 historical invariants
 
 1. The W8A16 worktree is a read-only historical baseline.
 2. ChunkScan must build and run from its own TileLang and TVM source tree.

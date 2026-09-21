@@ -149,3 +149,8 @@ environment, commands, result audit, and exact limitations.
 
 These results do not establish performance, physical GDMA/BDC overlap,
 eight-core scaling, other shapes, or BM1690e/SG2260e compatibility.
+
+The staged follow-up for trustworthy single-core benchmarking, shape
+parameterization, BM1690 1/2/4/8-core correctness, scaling measurements, and
+final tuning is documented in
+`P8_P10_BM1690_PERFORMANCE_MULTICORE_PLAN.md`.
