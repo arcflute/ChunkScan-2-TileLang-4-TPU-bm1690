@@ -154,3 +154,7 @@ The staged follow-up for trustworthy single-core benchmarking, shape
 parameterization, BM1690 1/2/4/8-core correctness, scaling measurements, and
 final tuning is documented in
 `P8_P10_BM1690_PERFORMANCE_MULTICORE_PLAN.md`.
+
+P8 has since passed its seven-round physical BM1690 measurement gate.  P9
+starts with the required 1/2/4/8-core runtime work-item probe; its commands and
+acceptance checks are in `P9_BM1690_MULTICORE_IMPLEMENTATION_GUIDE.md`.

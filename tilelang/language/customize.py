@@ -235,6 +235,21 @@ def ppl_clear(buffer):
     return T.ppl_fill(buffer, T.float32(0))
 
 
+def ppl_workitem_index():
+    """Return the BM1690 runtime work-item index for the current TPU core.
+
+    The value is assigned by ``tpuRtKernelLaunch`` from its block count.  It
+    must only be used by TPU-targeted kernels; cmodel execution is not used to
+    validate physical multi-core dispatch.
+    """
+    return T.call_extern("int32", "ppl.workitem_index")
+
+
+def ppl_workitem_num():
+    """Return the number of BM1690 runtime work-items in this launch."""
+    return T.call_extern("int32", "ppl.workitem_num")
+
+
 def ppl_subtract(out, inp1, inp2):
     """Compute elementwise subtraction `out = inp1 - inp2`.
 

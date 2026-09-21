@@ -1000,7 +1000,15 @@ void CodeGenTileLangPPL::VisitExpr_(const CallNode *op, std::ostream &os) {
   std::vector<std::string> inst;
   if (op->op.same_as(builtin::call_extern())) {
     std::string op_name = Downcast<StringImm>(op->args[0])->value;
-    if (op_name == "ppl.copy") {
+    if (op_name == "ppl.workitem_index") {
+      ICHECK_EQ(op->args.size(), 1U)
+          << "ppl.workitem_index does not accept arguments";
+      os << "tpu_workitem_index()";
+    } else if (op_name == "ppl.workitem_num") {
+      ICHECK_EQ(op->args.size(), 1U)
+          << "ppl.workitem_num does not accept arguments";
+      os << "tpu_workitem_num()";
+    } else if (op_name == "ppl.copy") {
       tl::BufferMap buffer_map;
       auto is_local_tensor_scope = [](const std::string &scope) {
         return scope == "shared.dyn" || scope == "local" ||
