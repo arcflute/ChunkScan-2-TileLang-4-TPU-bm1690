@@ -158,3 +158,8 @@ final tuning is documented in
 P8 has since passed its seven-round physical BM1690 measurement gate.  P9
 starts with the required 1/2/4/8-core runtime work-item probe; its commands and
 acceptance checks are in `P9_BM1690_MULTICORE_IMPLEMENTATION_GUIDE.md`.
+
+The runtime probe has passed on physical BM1690 hardware.  The independent
+task-major S1 implementation, parameterized shapes, guard checks, and full
+1/2/4/8-core correctness matrix are documented in
+`P9_2_BM1690_MULTICORE_S1_IMPLEMENTATION_GUIDE.md`.

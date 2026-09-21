@@ -7,8 +7,9 @@ ChunkScan 正确性。本指南按内部停止门推进，但这些停止门仍�
 2. P9.2：参数化物理 ABI 和任务索引，先完成多核 S1；
 3. P9.3：迁移 S3/P6，并完成全部形状与核数的正确性矩阵。
 
-本次交付实现 P9.1。必须先通过 P9.1，才能把 work-item 接入大面积
-ChunkScan 源码。仅将 host `block_num` 改成 8 不构成多核实现。
+P9.1 已在真实 BM1690 上通过 1/2/4/8 核各 20 次验收。P9.2 的实际
+ChunkScan S1 实现与命令见
+`P9_2_BM1690_MULTICORE_S1_IMPLEMENTATION_GUIDE.md`。
 
 ## 1. P9.1 修改内容
 
@@ -197,6 +198,5 @@ P9.1 只证明：BM1690 host 的 `block_num`、参数结构数量以及设备端
 work-item index/num 在 1/2/4/8 核下语义一致。它不证明 ChunkScan 已经多核，
 也没有性能结论。
 
-P9.1 通过后继续 P9.2：参数化 B/Ck/H 和 compact ABI 的物理索引，按
-`(batch, chunk, head)` 将互不重叠的输出任务分配给 work-item，首先完成
-多核 S1 正确性。
+该停止门已通过。P9.2 按 `(batch, chunk, head)` 分配互不重叠的输出任务，
+并首先验证多核 S1 正确性；不要把 P9.1 探针结果当成 ChunkScan 多核结果。

@@ -328,9 +328,11 @@ P8 已在真实 BM1690 上完成 7 轮正式测量并通过正确性前后门。
 CV 均低于 5%；固定小形状上 S3/P6 相对 S1 的同步调用加速分别为
 `1.2351x` 和 `1.2466x`。这些数字仍受 P8 的单核、小形状和同步调用边界约束。
 
-当前进入 P9.1：先验证 1/2/4/8 核 runtime work-item 编号、数量、覆盖和
-确定性，再将相同接口接入参数化 ChunkScan。具体命令和停止门见
-`P9_BM1690_MULTICORE_IMPLEMENTATION_GUIDE.md`。
+P9.1 已在真实 BM1690 上通过：1/2/4/8 核各重复 20 次，work-item 编号、
+数量、覆盖、sentinel 和确定性全部正确。当前进入 P9.2：使用 task-major
+compact ABI，将 `(batch, chunk, head)` 任务接入真实 S1，并完成 R0、R1、
+任务数小于核数和非整除任务数的正确性矩阵。具体命令见
+`P9_2_BM1690_MULTICORE_S1_IMPLEMENTATION_GUIDE.md`。
 
 ## 10. 计划依据
 
