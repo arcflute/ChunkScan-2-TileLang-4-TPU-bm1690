@@ -329,10 +329,14 @@ CV 均低于 5%；固定小形状上 S3/P6 相对 S1 的同步调用加速分别
 `1.2351x` 和 `1.2466x`。这些数字仍受 P8 的单核、小形状和同步调用边界约束。
 
 P9.1 已在真实 BM1690 上通过：1/2/4/8 核各重复 20 次，work-item 编号、
-数量、覆盖、sentinel 和确定性全部正确。当前进入 P9.2：使用 task-major
-compact ABI，将 `(batch, chunk, head)` 任务接入真实 S1，并完成 R0、R1、
-任务数小于核数和非整除任务数的正确性矩阵。具体命令见
-`P9_2_BM1690_MULTICORE_S1_IMPLEMENTATION_GUIDE.md`。
+数量、覆盖、sentinel 和确定性全部正确。P9.2 也已通过完整真机矩阵：task-major
+S1 在 R0、R1、edge3、edge10 的 1/2/4/8 核下各重复 20 次，CPU oracle、
+同源码单核、guard 和确定性全部通过。
+
+当前进入 P9.3：保持相同 ABI 和任务映射，将两级流水 S3 与显式 sProg-B P6
+一次性迁移到多核，并要求二者在完整矩阵中逐位一致。具体命令见
+`P9_3_BM1690_MULTICORE_S3_P6_IMPLEMENTATION_GUIDE.md`。只有 P9.3 真机门
+通过后才能进入 P10 多核性能测试。
 
 ## 10. 计划依据
 

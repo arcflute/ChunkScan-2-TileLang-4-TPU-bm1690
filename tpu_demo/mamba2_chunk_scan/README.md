@@ -163,3 +163,7 @@ The runtime probe has passed on physical BM1690 hardware.  The independent
 task-major S1 implementation, parameterized shapes, guard checks, and full
 1/2/4/8-core correctness matrix are documented in
 `P9_2_BM1690_MULTICORE_S1_IMPLEMENTATION_GUIDE.md`.
+That P9.2 matrix has passed on physical BM1690 hardware.  P9.3 reuses the
+accepted ABI and work-item ownership for the pipelined S3 and explicit P6
+candidates; its combined correctness gate is documented in
+`P9_3_BM1690_MULTICORE_S3_P6_IMPLEMENTATION_GUIDE.md`.

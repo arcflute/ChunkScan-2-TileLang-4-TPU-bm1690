@@ -200,3 +200,6 @@ work-item index/num 在 1/2/4/8 核下语义一致。它不证明 ChunkScan 已�
 
 该停止门已通过。P9.2 按 `(batch, chunk, head)` 分配互不重叠的输出任务，
 并首先验证多核 S1 正确性；不要把 P9.1 探针结果当成 ChunkScan 多核结果。
+
+P9.2 随后已在真实 BM1690 上通过完整 S1 正确性矩阵。S3/P6 多核迁移与
+验收命令见 `P9_3_BM1690_MULTICORE_S3_P6_IMPLEMENTATION_GUIDE.md`。
