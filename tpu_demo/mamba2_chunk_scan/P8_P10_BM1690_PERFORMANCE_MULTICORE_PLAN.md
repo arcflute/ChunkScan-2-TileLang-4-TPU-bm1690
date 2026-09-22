@@ -333,10 +333,14 @@ P9.1 已在真实 BM1690 上通过：1/2/4/8 核各重复 20 次，work-item 编
 S1 在 R0、R1、edge3、edge10 的 1/2/4/8 核下各重复 20 次，CPU oracle、
 同源码单核、guard 和确定性全部通过。
 
-当前进入 P9.3：保持相同 ABI 和任务映射，将两级流水 S3 与显式 sProg-B P6
-一次性迁移到多核，并要求二者在完整矩阵中逐位一致。具体命令见
-`P9_3_BM1690_MULTICORE_S3_P6_IMPLEMENTATION_GUIDE.md`。只有 P9.3 真机门
-通过后才能进入 P10 多核性能测试。
+P9.3 已在真实 BM1690 上通过：S3/P6 在 R0、R1、edge3、edge10 的
+1/2/4/8 核下各重复 20 次，CPU oracle、同源码单核、guard、确定性以及
+S3/P6 逐位一致性全部通过。首次正式运行出现过一次 runtime module-load
+偶发错误；最小复现和完整重试均干净通过，失败日志继续保留。
+
+当前进入融合后的 P10：使用 R1–R3，一次完成 S1/S3/P6 的 1/2/4/8 核
+正式计时、scaling 指标、正确性前后门、稳定性判断、原始样本和 Markdown
+报告。具体命令见 `P10_BM1690_MULTICORE_PERFORMANCE_IMPLEMENTATION_GUIDE.md`。
 
 ## 10. 计划依据
 

@@ -167,3 +167,6 @@ That P9.2 matrix has passed on physical BM1690 hardware.  P9.3 reuses the
 accepted ABI and work-item ownership for the pipelined S3 and explicit P6
 candidates; its combined correctness gate is documented in
 `P9_3_BM1690_MULTICORE_S3_P6_IMPLEMENTATION_GUIDE.md`.
+P9.3 has also passed its complete physical-hardware matrix.  The fused P10
+R1/R2/R3 performance and scaling protocol is documented in
+`P10_BM1690_MULTICORE_PERFORMANCE_IMPLEMENTATION_GUIDE.md`.
