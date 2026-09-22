@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+from pathlib import Path
 
 import tilelang
 
@@ -11,6 +12,7 @@ from tpu_demo.mamba2_chunk_scan.test_chunk_scan_multicore_benchmark_p10 import (
     STAGES,
     add_comparative_metrics,
     summarize_point,
+    validate_generated_host_sources,
 )
 from tpu_demo.mamba2_chunk_scan.test_chunk_scan_multicore_s1_p9 import (
     static_local_memory_end,
@@ -89,7 +91,25 @@ def test_p10_summary_metrics():
     assert summaries["r1:p6:c2"]["stability"] == "STABLE"
 
 
+def test_p10_host_template_ownership():
+    root = Path(__file__).resolve().parents[3]
+    kernel_host = (
+        root
+        / "tpu_demo/mamba2_chunk_scan/"
+        "kernel_template_device_multicore.cpp"
+    ).read_text(encoding="utf-8")
+    benchmark_main = (
+        root
+        / "tpu_demo/mamba2_chunk_scan/"
+        "main_template_device_bench.cpp"
+    ).read_text(encoding="utf-8")
+    validate_generated_host_sources(
+        "template-test", kernel_host, benchmark_main
+    )
+
+
 if __name__ == "__main__":
     test_p10_shapes_and_lowering()
     test_p10_summary_metrics()
+    test_p10_host_template_ownership()
     print("P10 R1/R2/R3 S1/S3/P6 lowering PASS")

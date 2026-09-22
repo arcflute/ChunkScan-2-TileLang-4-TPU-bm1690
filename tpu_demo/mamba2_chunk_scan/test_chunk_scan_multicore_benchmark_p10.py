@@ -219,6 +219,24 @@ def collect_environment(
     }
 
 
+def validate_generated_host_sources(
+    label: str,
+    kernel_host_source: str,
+    benchmark_main_source: str,
+) -> None:
+    for marker in (
+        "CHUNKSCAN_CORE_NUM",
+        "block_num = static_cast<uint64_t>(core_num)",
+        "apis.data()",
+    ):
+        if marker not in kernel_host_source:
+            raise AssertionError(f"{label}: kernel.cpp lacks {marker!r}")
+    if "steady_clock_sync_kernel_call" not in benchmark_main_source:
+        raise AssertionError(
+            f"{label}: main.cpp lacks 'steady_clock_sync_kernel_call'"
+        )
+
+
 def compile_point(
     run_dir: Path,
     stage: str,
@@ -246,13 +264,15 @@ def compile_point(
         )
 
     source_path = runtime_dir / "kernel.c"
-    host_path = runtime_dir / "main.cpp"
+    kernel_host_path = runtime_dir / "kernel.cpp"
+    benchmark_main_path = runtime_dir / "main.cpp"
     header_path = runtime_dir / "kernel.h"
     device_library = runtime_dir / "libkernel.so"
     host_library = runtime_dir / "main.so"
     for path in (
         source_path,
-        host_path,
+        kernel_host_path,
+        benchmark_main_path,
         header_path,
         device_library,
         host_library,
@@ -261,7 +281,8 @@ def compile_point(
             raise FileNotFoundError(path)
 
     source = source_path.read_text(encoding="utf-8")
-    host_source = host_path.read_text(encoding="utf-8")
+    kernel_host_source = kernel_host_path.read_text(encoding="utf-8")
+    benchmark_main_source = benchmark_main_path.read_text(encoding="utf-8")
     header = header_path.read_text(encoding="utf-8")
     for marker in (
         "tpu_workitem_index()",
@@ -279,15 +300,11 @@ def compile_point(
         raise AssertionError(
             f"{config.name}/{stage}: pipeline markers {starts}/{ends}"
         )
-    for marker in (
-        "CHUNKSCAN_CORE_NUM",
-        "block_num = static_cast<uint64_t>(core_num)",
-        "steady_clock_sync_kernel_call",
-    ):
-        if marker not in host_source:
-            raise AssertionError(
-                f"{config.name}/{stage}: host lacks {marker!r}"
-            )
+    validate_generated_host_sources(
+        f"{config.name}/{stage}",
+        kernel_host_source,
+        benchmark_main_source,
+    )
     for index in range(1, 9):
         if f"ptr_v{index};" not in header:
             raise AssertionError(
@@ -324,7 +341,8 @@ def compile_point(
             for name, shape in physical_shapes(config).items()
         },
         "kernel_source_sha256": sha256_file(source_path),
-        "host_source_sha256": sha256_file(host_path),
+        "kernel_host_source_sha256": sha256_file(kernel_host_path),
+        "benchmark_main_source_sha256": sha256_file(benchmark_main_path),
         "device_library_sha256": sha256_file(device_library),
         "host_library_sha256": sha256_file(host_library),
         "device_file": device_file,
